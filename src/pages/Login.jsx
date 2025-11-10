@@ -11,15 +11,34 @@ const Login = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
 
-  const handleLogin = (e) => {
+  const handleLogin = async (e) => {
     e.preventDefault();
     if (!email || !password) {
       setError("Please enter email and password.");
       return;
     }
-    setError("");
-    alert("Login successful!");
-    navigate("/dashboard");
+    try {
+        const response = await fetch("http://localhost:3000/api/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name, email, password}),
+          credentials: "include",
+        });
+
+        const text = await response.text();
+
+        if (response.ok) {
+          alert("Login successful!");
+          navigate("/");
+        }
+        else {
+          setError(text);
+        }
+      }
+      catch (err) {
+        console.error(err);
+        setError("Server error. Please try again later.");
+      };
   };
 
   return (

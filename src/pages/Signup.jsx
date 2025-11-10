@@ -12,24 +12,41 @@ const Signup = () => {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
-  const handleSignup = (e) => {
+  const handleSignup = async (e) => {
     e.preventDefault();
     if (!name || !email || !password || !confirmPassword) {
       setError("Please fill in all fields.");
       return;
     }
-    if (password !== confirmPassword) {
-      setError("Passwords do not match.");
-      return;
-    }
-    setError("");
-    alert("Signup successful!");
-    navigate("/login");
+  
+    try {
+        const response = await fetch("http://localhost:3000/api/signup", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name, email, password, confirmpassword: confirmPassword }),
+          credentials: "include",
+          mode:'cors',
+        });
+
+        const text = await response.text();
+
+        if (response.ok) {
+          setError(""); 
+          navigate("/login", { state: { success: true } });
+        }
+        else {
+          setError(text);
+        }
+      }
+      catch (err) {
+        console.error(err);
+        setError("Server error. Please try again later.");
+      };
   };
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50">
-      {/* Header Section */}
+
       <div className="mb-8 flex flex-col items-center">
     
         <h2 className="text-2xl font-bold text-blue-900">Vantage AI</h2>
@@ -38,7 +55,7 @@ const Signup = () => {
         <p className="text-gray-600 text-center max-w-xl mb-4">
           Create your free account and start accessing AI-powered financial insights and market intelligence today.
         </p>
-        {/* Features */}
+
         <div className="flex justify-center gap-8 mb-4">
           <div className="flex flex-col items-center">
             <span className="text-green-500 text-2xl">⚡</span>
@@ -61,7 +78,7 @@ const Signup = () => {
         </button>
       </div>
 
-      {/* Signup Form */}
+     
       <div className="bg-white p-8 rounded-2xl shadow-lg w-full max-w-md">
         {error && <p className="text-red-500 mb-4">{error}</p>}
         <form onSubmit={handleSignup} className="space-y-4">
