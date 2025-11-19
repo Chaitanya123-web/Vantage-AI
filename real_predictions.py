@@ -1,4 +1,4 @@
-# real_predictions.py - JSON Output for Node Integration
+# real_predictions.py - Final Clean Version for Node Integration
 import sys
 import os
 import json
@@ -8,54 +8,49 @@ from ml.prediction.ensemble_model import SimpleEnsemble
 from fetch_real_data import fetch_stock_data
 
 def predict_stock(ticker='AAPL', period='6mo'):
-    print(f"🎯 Making predictions for {ticker} (internal log)")
-
-    df = fetch_stock_data(ticker, period)
-    if df is None or df.empty:
-        print(f"❌ No data found for {ticker}")
-        return None
-
-    model = SimpleEnsemble(seq_len=30)
     try:
+        df = fetch_stock_data(ticker, period)
+        if df is None or df.empty:
+            return {"ticker": ticker, "error": "No data"}
+
+        model = SimpleEnsemble(seq_len=30)
         model.train(df)
-    except Exception as e:
-        print(f"⚠️ Training issue: {e}")
+        result = model.predict(df)
+        current_price = float(df['close'].iloc[-1])
 
-    result = model.predict(df)
-    current_price = df['close'].iloc[-1]
-
-    predictions = {
-        "ticker": ticker,
-        "current_price": float(current_price),
-        "predictions": {
-            "ensemble": float(result.ensemble),
-            "xgboost": float(result.xgb),
-            "lstm": float(result.lstm),
-            "prophet": float(result.prophet)
-        },
-        "change_percent": {
-            "ensemble": float((result.ensemble - current_price) / current_price * 100),
-            "xgboost": float((result.xgb - current_price) / current_price * 100),
-            "lstm": float((result.lstm - current_price) / current_price * 100),
-            "prophet": float((result.prophet - current_price) / current_price * 100),
+        predictions = {
+            "ticker": ticker,
+            "current_price": current_price,
+            "predictions": {
+                "ensemble": float(result.ensemble),
+                "xgboost": float(result.xgb),
+                "lstm": float(result.lstm),
+                "prophet": float(result.prophet)
+            },
+            "change_percent": {
+                "ensemble": float((result.ensemble - current_price) / current_price * 100),
+                "xgboost": float((result.xgb - current_price) / current_price * 100),
+                "lstm": float((result.lstm - current_price) / current_price * 100),
+                "prophet": float((result.prophet - current_price) / current_price * 100)
+            }
         }
-    }
-    return predictions
+        return predictions
+
+    except Exception as e:
+        return {"ticker": ticker, "error": str(e)}
 
 if __name__ == "__main__":
     try:
-        # Get tickers from Node arguments
-        import sys
         args = json.loads(sys.argv[1]) if len(sys.argv) > 1 else {}
         tickers = args.get("tickers", ["AAPL", "GOOGL", "MSFT"])
 
         results = []
         for ticker in tickers:
-            prediction = predict_stock(ticker)
-            if prediction:
-                results.append(prediction)
+            results.append(predict_stock(ticker))
 
-        # ✅ Print ONLY JSON Output
+        # ✅ Only output one clean JSON line
         print(json.dumps({"success": True, "predictions": results}))
+        sys.exit(0)
     except Exception as e:
         print(json.dumps({"success": False, "error": str(e)}))
+        sys.exit(1)

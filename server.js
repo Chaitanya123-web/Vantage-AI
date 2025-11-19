@@ -29,24 +29,23 @@ connectDB();
 
 // --- AUTHENTICATION MIDDLEWARE ---
 const authenticate = (req, res, next) => {
-    const token = req.cookies.token;
-    console.log("🔍 Authenticate middleware - Token:", token ? "EXISTS" : "MISSING");
-    if (!token) {
-        return res.status(401).send({ message: "Access denied. No token provided." });
-    }
-    try {
-        const decoded = jwt.verify(token, "chaibiscuit");
-        console.log("✅ Token verified for user:", decoded._id);
-        req.user = decoded;
-        next();
-    } catch (ex) {
-        console.error(" Token verification failed:", ex.message);
-        res.status(401).send({ message: "Invalid token." });
-    }
+  const token = req.cookies.token;
+  console.log("Authenticate middleware - Token:", token ? "EXISTS" : "MISSING");
+  if (!token) {
+    return res.status(401).send({ message: "Access denied. No token provided." });
+  }
+  try {
+    const decoded = jwt.verify(token, "chaibiscuit");
+    console.log("Token verified for user:", decoded._id);
+    req.user = decoded;
+    next();
+  } catch (ex) {
+    console.error(" Token verification failed:", ex.message);
+    res.status(401).send({ message: "Invalid token." });
+  }
 };
 
-
-
+// --- AUTH ROUTES ---
 app.post("/api/signup", async (req, res) => {
   try {
     const { name, email, password, confirmpassword } = req.body;
@@ -64,16 +63,16 @@ app.post("/api/signup", async (req, res) => {
 
     const token = jwt.sign({ _id: newUser._id, email }, "chaibiscuit");
 
-    res.cookie("token", token, { 
+    res.cookie("token", token, {
       httpOnly: true,
       sameSite: "lax",
       secure: false
     });
-    
-    console.log("✅ Signup successful - Cookie set for:", email);
+
+    console.log("Signup successful - Cookie set for:", email);
     res.status(201).send("Signup successful");
   } catch (err) {
-    console.error("❌ Signup error:", err);
+    console.error("Signup error:", err);
     res.status(500).send("Server error during signup");
   }
 });
@@ -88,44 +87,43 @@ app.post("/api/login", async (req, res) => {
     if (!match) return res.status(400).send("Invalid credentials");
 
     const token = jwt.sign({ _id: user._id, email: user.email }, "chaibiscuit");
-    
-    res.cookie("token", token, { 
+
+    res.cookie("token", token, {
       httpOnly: true,
       sameSite: "lax",
       secure: false
     });
-    
-    console.log("✅ Login successful - Cookie set for:", email);
+
+    console.log("Login successful - Cookie set for:", email);
     res.status(200).send("Login successful");
   } catch (err) {
-    console.error("❌ Login error:", err);
+    console.error("Login error:", err);
     res.status(500).send("Server error during login");
   }
 });
 
-// --- DASHBOARD CHECK ENDPOINT ---
+// --- DASHBOARD CHECK ---
 app.get("/api/dashboard", authenticate, (req, res) => {
-    console.log("✅ Dashboard check successful");
-    res.status(200).send({ message: "Authenticated" });
+  console.log("Dashboard check successful");
+  res.status(200).send({ message: "Authenticated" });
 });
 
 // --- PROFILE ROUTES ---
-
 app.get("/api/profile", authenticate, async (req, res) => {
   try {
-    console.log("🔍 Fetching profile for user ID:", req.user._id);
+    console.log(" Fetching profile for user ID:", req.user._id);
     const user = await Usermodel.findById(req.user._id).select("-password -__v -createdAt");
-    
+
     if (!user) {
-      console.error("❌ User not found in database:", req.user._id);
+      console.error(" User not found in database:", req.user._id);
       res.clearCookie("token");
       return res.status(404).send({ message: "User not found" });
     }
-    
-    console.log("✅ Profile found:", user.name, user.email);
+
+    console.log(" Profile found:", user.name, user.email);
     res.json(user);
   } catch (err) {
-    console.error("❌ Profile fetch error:", err);
+    console.error(" Profile fetch error:", err);
     res.status(500).send({ message: "Error fetching profile" });
   }
 });
@@ -152,25 +150,24 @@ app.put("/api/profile", authenticate, async (req, res) => {
 
     if (!updatedUser) return res.status(404).send({ message: "User not found" });
 
-    console.log("✅ Profile updated:", updatedUser.name, updatedUser.email);
+    console.log(" Profile updated:", updatedUser.name, updatedUser.email);
     res.json(updatedUser);
   } catch (err) {
-    console.error("❌ Profile update error:", err);
+    console.error("Profile update error:", err);
     res.status(500).send({ message: err.message || "Update failed." });
   }
 });
 
 // --- PORTFOLIO ROUTES ---
-
 app.post("/api/portfolio", authenticate, async (req, res) => {
   try {
     const { name, tickers, weights } = req.body;
     const userId = req.user._id;
     const portfolio = await Portfoliomodel.create({ userId, name, tickers, weights });
-    console.log("✅ Portfolio created for user:", userId);
+    console.log("Portfolio created for user:", userId);
     res.status(201).json(portfolio);
   } catch (err) {
-    console.error("❌ Portfolio creation error:", err);
+    console.error(" Portfolio creation error:", err);
     res.status(500).send("Error creating portfolio");
   }
 });
@@ -180,82 +177,65 @@ app.get("/api/portfolio", authenticate, async (req, res) => {
     const userId = req.user._id;
     const portfolio = await Portfoliomodel.findOne({ userId });
     if (!portfolio) {
-      console.log("⚠️ No portfolio found for user:", userId);
+      console.log("No portfolio found for user:", userId);
       return res.status(404).send("Portfolio not found");
     }
-    console.log("✅ Portfolio found for user:", userId);
+    console.log(" Portfolio found for user:", userId);
     res.json(portfolio);
   } catch (err) {
-    console.error("❌ Portfolio fetch error:", err);
+    console.error("Portfolio fetch error:", err);
     res.status(500).send("Error fetching portfolio");
   }
 });
 
-// --- PREDICTIONS ROUTES (NEW - Mock Data) ---
-
-// --- ML API PROXY ROUTES (ADD THESE) ---
-
-// --- ML ROUTES (Direct Python execution) ---
-
-// --- ML ROUTES (Direct Python execution using real data) ---
-
+// --- UPDATED PREDICTIONS-ML (NON-BLOCKING) ---
 app.post("/api/predictions-ml", authenticate, async (req, res) => {
   try {
     const userId = req.user._id;
     const portfolio = await Portfoliomodel.findOne({ userId });
-
-    // Pull tickers from the user’s portfolio if available
     const tickers = portfolio ? portfolio.tickers : ['AAPL', 'GOOGL', 'MSFT'];
 
-    // Run Python script for real stock predictions
-    let options = {
+    console.log(" Fetching live stock data for:", tickers);
+
+    let pyshell = new PythonShell('real_predictions.py', {
       mode: 'text',
       pythonPath: 'python',
-      scriptPath: './', // run from root, where real_predictions.py is present
-      args: [JSON.stringify({ tickers: tickers })]
-    };
+      scriptPath: './',
+      args: [JSON.stringify({ tickers })],
+    });
 
-    console.log("📊 Fetching live stock data for:", tickers);
+    let output = "";
 
-    PythonShell.run('real_predictions.py', options, function (err, results) {
+    pyshell.on('message', (message) => {
+      output += message;
+    });
+
+    pyshell.end((err) => {
       if (err) {
-        console.error("Python error:", err);
-        return res.json({
-          success: true,
-          fallback: true,
-          message: "⚠️ Fallback to mock predictions.",
-          predictions: [
-            { ticker: 'AAPL', currentPrice: 178.50, predictedPrice: 185.20, confidence: 0.87 },
-            { ticker: 'GOOGL', currentPrice: 142.30, predictedPrice: 138.90, confidence: 0.72 },
-            { ticker: 'MSFT', currentPrice: 378.90, predictedPrice: 385.40, confidence: 0.81 }
-          ]
-        });
-      }
-
-      console.log("✅ Real ML predictions from Python:", results);
-
-      if (!results || !results.length) {
+        console.error(" Python error:", err);
         return res.status(500).json({
           success: false,
-          error: "No output received from ML script."
+          message: "Python script failed.",
         });
       }
 
-      const parsed = typeof results[0] === "string"
-        ? JSON.parse(results[0])
-        : results[0];
-
-      res.json({ success: true, predictions: parsed });
+      try {
+        const parsed = JSON.parse(output);
+        console.log(" Python output received:", parsed);
+        res.json(parsed);
+      } catch (parseErr) {
+        console.error(" JSON parse error:", parseErr);
+        res.status(500).json({ success: false, error: "Invalid JSON output" });
+      }
     });
   } catch (err) {
-    console.error("❌ ML API execution error:", err);
+    console.error("ML API execution error:", err);
     res.status(500).json({ error: "Prediction failed - internal server error." });
   }
 });
 
-
+// --- MOCK ROUTES ---
 app.get("/api/explainable-ai-ml", authenticate, (req, res) => {
-  // For now, return the mock data since SHAP is complex
   res.json({
     modelExplanation: {
       features: [
@@ -273,7 +253,6 @@ app.get("/api/explainable-ai-ml", authenticate, (req, res) => {
 });
 
 app.get("/api/nlp-analysis-ml", authenticate, (req, res) => {
-  // For now, return the mock data
   res.json({
     sentiment: {
       overall: "positive",
@@ -289,7 +268,6 @@ app.get("/api/nlp-analysis-ml", authenticate, (req, res) => {
 });
 
 app.get("/api/stress-testing-ml", authenticate, (req, res) => {
-  // For now, return the mock data
   res.json({
     scenarios: [
       {
@@ -320,11 +298,9 @@ app.get("/api/stress-testing-ml", authenticate, (req, res) => {
   });
 });
 
-
-// --- SETTINGS ROUTES (NEW - Mock Data) ---
-
+// --- SETTINGS ---
 app.get("/api/settings", authenticate, async (req, res) => {
-  console.log("✅ Settings endpoint called");
+  console.log("Settings endpoint called");
   try {
     const user = await Usermodel.findById(req.user._id).select("-password");
     res.json({
@@ -339,32 +315,38 @@ app.get("/api/settings", authenticate, async (req, res) => {
       }
     });
   } catch (err) {
-    console.error("❌ Settings fetch error:", err);
+    console.error("Settings fetch error:", err);
     res.status(500).send({ message: "Error fetching settings" });
   }
 });
 
 app.put("/api/settings", authenticate, async (req, res) => {
-  console.log("✅ Settings update endpoint called");
+  console.log(" Settings update endpoint called");
   const { preferences } = req.body;
-  // For now, just return success since we don't have a preferences model
   res.json({
     message: "Settings updated successfully",
     preferences: preferences
   });
 });
 
-// --- ML PLAYGROUND ROUTE ---
-
+// --- ML PLAYGROUND ---
 app.post("/api/run-ml", authenticate, async (req, res) => {
   try {
-    console.log("🎯 ML Playground initiated...");
+    console.log("ML Playground initiated...");
 
-    // Use the user's portfolio tickers
     const userId = req.user._id;
-    const portfolio = await Portfoliomodel.findOne({ userId });
+
+    // try Mongo safely
+    let portfolio = null;
+    try {
+      portfolio = await Portfoliomodel.findOne({ userId });
+    } catch (dbErr) {
+      console.error(" Mongo fetch failed:", dbErr.message);
+      portfolio = null;
+    }
+
     const tickers = portfolio ? portfolio.tickers : ["AAPL"];
-    console.log("📊 Running ML for tickers:", tickers);
+    console.log("Running ML for tickers:", tickers);
 
     let options = {
       mode: "text",
@@ -375,32 +357,29 @@ app.post("/api/run-ml", authenticate, async (req, res) => {
 
     PythonShell.run("real_predictions.py", options, function (err, results) {
       if (err) {
-        console.error("❌ ML Execution Error:", err);
+        console.error(" ML Execution Error:", err);
         return res.status(500).json({
           success: false,
           error: "Python script failed",
+          logs: err.message || "Unknown Python error"
         });
       }
 
-      console.log("✅ Python Output Received");
+      console.log("Python Output Received");
       res.json({
         success: true,
-        logs: results,
+        logs: results || [],
       });
     });
   } catch (err) {
-    console.error("❌ ML Playground error:", err);
-    res.status(500).json({ error: "Internal Server Error running ML" });
+    console.error("ML Playground error:", err);
+    res.status(500).json({ success: false, error: "Internal Server Error running ML" });
   }
 });
 
 
-// ========================================
-// STATIC FILES & FALLBACK (MUST BE LAST)
-// ========================================
-
+// STATIC FRONTEND HANDLER
 const frontendPath = path.join(__dirname, "dist");
-
 app.use(express.static(frontendPath));
 
 app.get(/.*/, (req, res) => {
@@ -410,7 +389,7 @@ app.get(/.*/, (req, res) => {
   res.sendFile(path.join(frontendPath, "index.html"));
 });
 
-// Start server
+// START SERVER
 app.listen(3000, () => {
   console.log("=".repeat(50));
   console.log("🚀 Server running on http://localhost:3000");
@@ -423,24 +402,18 @@ app.listen(3000, () => {
   console.log("  PUT  /api/profile (protected)");
   console.log("  POST /api/portfolio (protected)");
   console.log("  GET  /api/portfolio (protected)");
-  console.log("  GET  /api/predictions (protected) - NEW");
-  console.log("  GET  /api/nlp-analysis (protected) - NEW");
-  console.log("  GET  /api/explainable-ai (protected) - NEW");
-  console.log("  GET  /api/stress-testing (protected) - NEW");
-  console.log("  GET  /api/settings (protected) - NEW");
-  console.log("  PUT  /api/settings (protected) - NEW");
+  console.log("  POST /api/predictions-ml (protected) ✅");
   console.log("=".repeat(50));
 });
 
+app.get("/api/users", (_req, res) => {
+  return res.json({ status: "pending" });
+});
 
-app.get("/api/users",(_req,res)=>{
-  return res.json({status:"pending"});
-})
+app.post("/api/users", (_req, res) => {
+  return res.json({ status: "pending" });
+});
 
-app.post("/api/users",(_req,res)=>{
-  return res.json({status:"pending"});
-})
-
-app.patch("/api/users",(_req,res)=>{
-  return res.json({status:"pending"});
-})
+app.patch("/api/users", (_req, res) => {
+  return res.json({ status: "pending" });
+});

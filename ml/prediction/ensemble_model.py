@@ -1,4 +1,8 @@
-# ensemble.py
+import os
+os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+os.environ["TORCH_CUDA_DUMMY_DEVICE"] = "0"
+os.environ["OMP_NUM_THREADS"] = "1"
+
 import numpy as np
 import pandas as pd
 import xgboost as xgb
@@ -17,6 +21,7 @@ class PredictionResult:
     prophet: float
     timestamp: datetime
 
+
 class SimpleLSTM(nn.Module):
     def __init__(self, input_size=5, hidden_size=50):
         super().__init__()
@@ -25,80 +30,137 @@ class SimpleLSTM(nn.Module):
 
     def forward(self, x):
         out, _ = self.lstm(x)
-        out = out[:, -1, :]  # take last timestep
+        out = out[:, -1, :]
         return self.fc(out)
+
 
 class SimpleEnsemble:
     def __init__(self, seq_len=30):
         self.seq_len = seq_len
-        self.xgb = xgb.XGBRegressor(n_estimators=50)
+        self.xgb = xgb.XGBRegressor(n_estimators=50, verbosity=0)
         self.lstm = SimpleLSTM()
-        self.prophet = Prophet(daily_seasonality=False)
+        try:
+            self.prophet = Prophet(daily_seasonality=False)
+        except Exception as e:
+            print(f"Prophet initialization failed: {e}")
+            self.prophet = None
         self.scaler = StandardScaler()
         self.device = 'cpu'
 
     def prepare_xgb(self, df):
+        if len(df) <= self.seq_len:
+            return np.empty((0, 2))
+
         features = []
         for i in range(self.seq_len, len(df)):
-            window = df.iloc[i-self.seq_len:i]
-            features.append([window['close'].mean(), window['volume'].mean()])
+            window = df.iloc[i - self.seq_len:i]
+            features.append([
+                float(window['close'].mean()),
+                float(window['volume'].mean())
+            ])
         return np.array(features)
 
     def prepare_lstm(self, df):
-        data = df[['open','high','low','close','volume']].values
-        sequences = []
-        for i in range(self.seq_len, len(data)):
-            sequences.append(data[i-self.seq_len:i])
-        return torch.tensor(sequences, dtype=torch.float32)
+        if len(df) <= self.seq_len:
+            return torch.tensor([])
+
+        data = df[['open', 'high', 'low', 'close', 'volume']].values
+        sequences = [data[i - self.seq_len:i] for i in range(self.seq_len, len(data))]
+        return torch.tensor(np.array(sequences), dtype=torch.float32)
 
     def prepare_prophet(self, df):
-        df = df.reset_index().rename(columns={'index':'ds','close':'y'})
-        df['ds'] = pd.to_datetime(df['ds'])
-        return df[['ds','y']]
+        df_reset = df.copy().reset_index()
+        df_reset.columns = [c.lower() for c in df_reset.columns]
+        if "date" in df_reset.columns:
+            df_reset = df_reset.rename(columns={"date": "ds"})
+        elif "index" in df_reset.columns:
+            df_reset = df_reset.rename(columns={"index": "ds"})
+        elif "datetime" in df_reset.columns:
+            df_reset = df_reset.rename(columns={"datetime": "ds"})
+        else:
+            df_reset["ds"] = df_reset.index
+        df_reset["ds"] = pd.to_datetime(df_reset["ds"])
+        df_reset = df_reset.rename(columns={"close": "y"})
+        return df_reset[["ds", "y"]]
 
     def train(self, df):
-        # Align data
+        print("Training ensemble model ...")
         xgb_X = self.prepare_xgb(df)
         y = df['close'].values[self.seq_len:]
 
-        # Train XGBoost
-        self.xgb.fit(xgb_X, y)
+        if xgb_X.shape[0] == 0 or y.shape[0] == 0:
+            print("Not enough data to train the model.")
+            return
 
-        # Train LSTM (only if enough samples)
-        lstm_X = self.prepare_lstm(df)
-        lstm_y = torch.tensor(y.reshape(-1,1), dtype=torch.float32)
-        if len(lstm_X) > 1:  #  prevent batchnorm error
-            opt = torch.optim.Adam(self.lstm.parameters(), lr=0.01)
-            loss_fn = nn.MSELoss()
-            self.lstm.train()
-            for _ in range(10):
-                opt.zero_grad()
-                pred = self.lstm(lstm_X)
-                loss = loss_fn(pred, lstm_y)
-                loss.backward()
-                opt.step()
+        try:
+            print("Training XGBoost ...")
+            self.xgb.fit(xgb_X, y)
+            print("XGBoost trained successfully.")
+        except Exception as e:
+            print(f"XGBoost training failed: {e}")
 
-        # Train Prophet
-        prop_df = self.prepare_prophet(df)
-        self.prophet.fit(prop_df)
+        try:
+            print("Training LSTM ...")
+            lstm_X = self.prepare_lstm(df)
+            lstm_y = torch.tensor(y.reshape(-1, 1), dtype=torch.float32)
+            if len(lstm_X) > 1:
+                opt = torch.optim.Adam(self.lstm.parameters(), lr=0.01)
+                loss_fn = nn.MSELoss()
+                self.lstm.train()
+                for epoch in range(5):
+                    opt.zero_grad()
+                    pred = self.lstm(lstm_X)
+                    loss = loss_fn(pred, lstm_y)
+                    loss.backward()
+                    opt.step()
+                print("LSTM trained successfully.")
+        except Exception as e:
+            print(f"LSTM training failed: {e}")
+
+        if self.prophet is not None:
+            try:
+                print("🔹 Training Prophet ...")
+                prop_df = self.prepare_prophet(df)
+                self.prophet.fit(prop_df)
+                print("Prophet trained successfully.")
+            except Exception as e:
+                print(f"Prophet training failed: {e}")
+                self.prophet = None
 
     def predict(self, df):
-        # XGBoost
-        xgb_X = self.prepare_xgb(df)[-1].reshape(1,-1)
-        xgb_pred = self.xgb.predict(xgb_X)[0]
+        print(f"Making predictions for {df.index[-1].strftime('%Y-%m-%d')}")
 
-        # LSTM
-        lstm_X = self.prepare_lstm(df)[-1].unsqueeze(0)
-        self.lstm.eval()
-        with torch.no_grad():
-            lstm_pred = self.lstm(lstm_X).item()
+        try:
+            xgb_X = self.prepare_xgb(df)
+            if xgb_X.shape[0] == 0:
+                raise ValueError("Insufficient data for XGBoost.")
+            xgb_pred = float(self.xgb.predict(xgb_X[-1].reshape(1, -1))[0])
+        except Exception as e:
+            print(f"XGBoost prediction failed: {e}")
+            xgb_pred = float(df['close'].iloc[-1])
 
-        # Prophet
-        future = pd.DataFrame({'ds':[df.index[-1] + pd.Timedelta(days=1)]})
-        prophet_pred = self.prophet.predict(future)['yhat'].iloc[0]
+        try:
+            lstm_X = self.prepare_lstm(df)
+            self.lstm.eval()
+            with torch.no_grad():
+                lstm_pred = float(self.lstm(lstm_X[-1].unsqueeze(0)).item())
+        except Exception as e:
+            print(f"LSTM prediction failed: {e}")
+            lstm_pred = float(df['close'].iloc[-1])
 
-        # Simple average ensemble
-        ensemble_pred = (xgb_pred + lstm_pred + prophet_pred)/3
+        try:
+            if self.prophet is not None:
+                future = pd.DataFrame({'ds': [df.index[-1] + pd.Timedelta(days=1)]})
+                prophet_pred = float(self.prophet.predict(future)['yhat'].iloc[0])
+            else:
+                prophet_pred = (xgb_pred + lstm_pred) / 2
+        except Exception as e:
+            print(f"Prophet prediction failed: {e}")
+            prophet_pred = (xgb_pred + lstm_pred) / 2
+
+        ensemble_pred = float((xgb_pred + lstm_pred + prophet_pred) / 3)
+
+        print(f"Predictions done → XGB: {xgb_pred:.2f}, LSTM: {lstm_pred:.2f}, Prophet: {prophet_pred:.2f}, Ensemble: {ensemble_pred:.2f}")
 
         return PredictionResult(
             ensemble=ensemble_pred,
@@ -107,23 +169,3 @@ class SimpleEnsemble:
             prophet=prophet_pred,
             timestamp=datetime.now()
         )
-
-# Example usage
-if __name__ == "__main__":
-    dates = pd.date_range("2021-01-01", periods=100)
-    df = pd.DataFrame({
-        'open': np.random.rand(100)*100,
-        'high': np.random.rand(100)*100,
-        'low': np.random.rand(100)*100,
-        'close': np.random.rand(100)*100,
-        'volume': np.random.randint(1000,5000,100)
-    }, index=dates)
-
-    model = SimpleEnsemble(seq_len=30)
-    model.train(df)
-    result = model.predict(df)
-    print("Ensemble:", result.ensemble)
-    print("XGB:", result.xgb)
-    print("LSTM:", result.lstm)
-    print("Prophet:", result.prophet)
-    print("Timestamp:", result.timestamp)
